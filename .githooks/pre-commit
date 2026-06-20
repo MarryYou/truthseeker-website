@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── pre-commit hook: 防止 .env 和 .env.local 等敏感文件被意外提交 ────────────
+
+echo "🔍 正在检查是否有敏感文件被暂存..."
+
+# 检查会泄露 secrets 的文件模式
+PATTERNS=(
+  ".env"
+  ".env.local"
+  ".env.production"
+  ".env.development"
+  ".env.staging"
+)
+
+FOUND=false
+
+for pattern in "${PATTERNS[@]}"; do
+  STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep -E "(^|/)$pattern$" || true)
+  if [[ -n "$STAGED" ]]; then
+    echo "❌ 错误: 检测到敏感文件被 git add:"
+    echo "$STAGED" | sed 's/^/   /'
+    FOUND=true
+  fi
+done
+
+if [[ "$FOUND" == "true" ]]; then
+  echo ""
+  echo "这些文件包含 API 密钥、密码等敏感信息，不应该被提交到版本控制。"
+  echo "请先移除: git reset -- <文件路径>"
+  echo ""
+  echo "如果需要强制提交（例如 .env.example），请使用: git add --force <文件>"
+  exit 1
+fi
+
+echo "✅ 敏感文件检查通过"
+exit 0

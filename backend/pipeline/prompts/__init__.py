@@ -1,0 +1,61 @@
+"""pipeline/prompts/__init__.py — 统一导出所有子模块的 Prompt"""
+
+from backend.pipeline.prompts.strategy import (
+    STRATEGY_PLANNER_SYSTEM,
+    STRATEGY_PLANNER_HUMAN,
+)
+from backend.pipeline.prompts.intent import (
+    INTENT_ANALYZE_SYSTEM,
+    INTENT_ANALYZE_HUMAN,
+    FOLLOW_UP_INTENT_SYSTEM,
+    FOLLOW_UP_INTENT_HUMAN,
+)
+from backend.pipeline.prompts.search import (
+    SEARCH_EVALUATION_PROMPT,
+    PLANNER_SYSTEM,
+)
+from backend.pipeline.prompts.filter import (
+    FILTER_SYSTEM,
+    FILTER_HUMAN,
+)
+from backend.pipeline.prompts.report import (
+    REPORT_PIPELINE_SYSTEM,
+    REPORT_PIPELINE_HUMAN,
+    REPORT_AGENT_REFINE_SYSTEM,
+)
+from backend.pipeline.prompts.verify import (
+    ATOMIZE_SYSTEM,
+    ATOMIZE_HUMAN,
+    TRIPARTITE_SYSTEM,
+    TRIPARTITE_HUMAN,
+    TRIPARTITE_BATCH_SYSTEM,
+    TRIPARTITE_BATCH_HUMAN,
+    PROFILE_BATCH_PROMPT,
+    SINGLE_SOURCE_FACTUALITY_SYSTEM,
+    SINGLE_SOURCE_FACTUALITY_HUMAN
+)
+
+__all__ = [
+    "STRATEGY_PLANNER_SYSTEM",
+    "STRATEGY_PLANNER_HUMAN",
+    "INTENT_ANALYZE_SYSTEM",
+    "INTENT_ANALYZE_HUMAN",
+    "FOLLOW_UP_INTENT_SYSTEM",
+    "FOLLOW_UP_INTENT_HUMAN",
+    "SEARCH_EVALUATION_PROMPT",
+    "PLANNER_SYSTEM",
+    "FILTER_SYSTEM",
+    "FILTER_HUMAN",
+    "REPORT_PIPELINE_SYSTEM",
+    "REPORT_PIPELINE_HUMAN",
+    "REPORT_AGENT_REFINE_SYSTEM",
+    "ATOMIZE_SYSTEM",
+    "ATOMIZE_HUMAN",
+    "TRIPARTITE_SYSTEM",
+    "TRIPARTITE_HUMAN",
+    "TRIPARTITE_BATCH_SYSTEM",
+    "TRIPARTITE_BATCH_HUMAN",
+    "PROFILE_BATCH_PROMPT",
+    "SINGLE_SOURCE_FACTUALITY_SYSTEM",
+    "SINGLE_SOURCE_FACTUALITY_HUMAN"
+]

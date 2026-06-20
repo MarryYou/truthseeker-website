@@ -1,0 +1,58 @@
+@import "tailwindcss";
+@import "../styles/antd-overrides.css";
+@import "../styles/markdown.css";
+@import "../styles/animations.css";
+
+@theme {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+:root {
+  --background: #090a0f;
+  --foreground: #e2e8f0;
+
+  /* ===== 流体字体层级 (Fluid Typography) =====
+   * 在 375px~1440px 视口之间平滑缩放
+   * 使用方式: text-[var(--font-caption)] 或 font-size: var(--font-caption)
+   */
+  --font-micro:   clamp(10px, 0.69vw + 8px, 11px);    /* 装饰性 badge → 10~11px */
+  --font-caption: clamp(11px, 0.83vw + 9px, 12px);    /* 辅助说明文字 → 11~12px */
+  --font-note:    clamp(12px, 1.04vw + 9px, 13px);    /* 次要交互文字 → 12~13px */
+  --font-body:    clamp(13px, 1.25vw + 10px, 14px);   /* 正文参考 → 13~14px */
+  --font-content: 15px;                                 /* 主内容区，固定 */
+
+  /* ===== 响应式布局变量 ===== */
+  --sidebar-width: 240px;
+  --page-padding: clamp(16px, 3vw, 32px);
+}
+
+/* ===== 字体大小工具类（仅设置 font-size，不影响 color） ===== */
+.text-micro   { font-size: var(--font-micro); }
+.text-caption { font-size: var(--font-caption); }
+.text-note    { font-size: var(--font-note); }
+.text-body-sm { font-size: var(--font-body); }
+.text-content { font-size: var(--font-content); }
+
+/* 移动端隐藏侧边栏（由 ChatLayout 控制 overlay） */
+@media (max-width: 768px) {
+  :root {
+    --sidebar-width: 0px;
+  }
+}
+
+/* 隐藏滚动条但保留滚动能力 */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@layer base {
+  body {
+    @apply bg-[--background] text-[--foreground] antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}

@@ -1,0 +1,209 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# TruthSeeker — Docker 部署编排
+#   Docker 仅用于部署，本地开发请直接运行（详见 README）。
+#   所有服务通过 Nginx 统一入口 (端口 80)，无需在宿主机安装任何依赖。
+#   用法：
+#     make deploy    # 一键构建并启动
+#     make logs      # 查看日志
+#     make down      # 停止
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── 共享环境变量锚点 ─────────────────────────────────────────────────────────
+x-app-env: &app-env
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?error}@postgres:5432/${POSTGRES_DB:-truthseeker}
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+  LOGTO_ENDPOINT: ${LOGTO_ENDPOINT}
+  LOGTO_CLIENT_ID: ${LOGTO_CLIENT_ID}
+  LOGTO_CLIENT_SECRET: ${LOGTO_CLIENT_SECRET}
+  LOGTO_API_RESOURCE: ${LOGTO_API_RESOURCE}
+  FRONTEND_URL: ${APP_URL:-http://localhost}
+  CORS_ORIGINS: ${APP_URL:-http://localhost}
+  ENV: production
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: truthseeker-postgres
+    restart: unless-stopped
+    expose:
+      - "5432"
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?error}
+      POSTGRES_DB: ${POSTGRES_DB:-truthseeker}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    mem_limit: 512m
+    logging: &default-logging
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - truthseeker-network
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: truthseeker-redis
+    restart: unless-stopped
+    expose:
+      - "6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    mem_limit: 256m
+    logging: *default-logging
+    networks:
+      - truthseeker-network
+
+  # ── 数据库迁移 ────────────────────────────────────────────────────────────
+  migrations:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: truthseeker-migrations
+    command: alembic -c backend/alembic.ini upgrade head
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    cap_drop:
+      - ALL
+    logging: *default-logging
+    networks:
+      - truthseeker-network
+
+  # ── Backend (FastAPI) ──────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: truthseeker-backend
+    restart: unless-stopped
+    stop_grace_period: 15s
+    expose:
+      - "8000"
+    environment:
+      <<: *app-env
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\")'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    mem_limit: 1g
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging: *default-logging
+    networks:
+      - truthseeker-network
+
+  # ── Worker ─────────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: truthseeker-worker
+    restart: unless-stopped
+    stop_grace_period: 90s
+    command: python -m backend.worker
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    mem_limit: 4g
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging: *default-logging
+    networks:
+      - truthseeker-network
+
+  # ── Frontend (Next.js) ─────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: runner
+    container_name: truthseeker-frontend
+    restart: unless-stopped
+    stop_grace_period: 15s
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      BACKEND_URL: http://nginx:80
+    mem_limit: 512m
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging: *default-logging
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - truthseeker-network
+
+  # ── Nginx (反向代理入口) ───────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: truthseeker-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    mem_limit: 128m
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETGID
+      - SETUID
+    logging: *default-logging
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - truthseeker-network
+
+
+
+networks:
+  truthseeker-network:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:

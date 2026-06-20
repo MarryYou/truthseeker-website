@@ -1,0 +1,13 @@
+.env*
+!.env.example
+**/.env*
+!**/.env.example
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.git
+**/.vscode
+**/.next
+**/node_modules
+*.log
+docker-compose.override.yml

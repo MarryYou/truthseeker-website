@@ -1,0 +1,11 @@
+{
+  "include": ["backend"],
+  "exclude": ["**/__pycache__", "backend/tests"],
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.14",
+  "venvPath": "/Users/fanhaotian/workspace/truth-seeker",
+  "venv": ".venv",
+  "extraPaths": ["/Users/fanhaotian/workspace/truth-seeker"],
+  "typeCheckingMode": "standard"
+}
