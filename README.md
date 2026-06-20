@@ -133,14 +133,93 @@ graph TB
 
 ---
 
+---
+
+## 🗄️ 数据模型与分层架构
+
+### 实体层级链
+
+多租户隔离的核心在于四级实体链，每一级通过数据库外键级联：
+
+```mermaid
+erDiagram
+    Tenant ||--o{ User : "has"
+    Tenant ||--o{ UserProvider : "has"
+    Tenant ||--o{ UserModelAsset : "has"
+    Tenant ||--o{ ResearchPreset : "has"
+    Tenant ||--o{ ResearchSession : "has"
+    User ||--o{ ResearchSession : "owns"
+    User ||--o{ UserProvider : "owns"
+    User ||--o{ UserModelAsset : "owns"
+    User ||--o{ ResearchPreset : "owns"
+    ResearchSession ||--o{ ResearchTask : "contains"
+    ResearchPreset ||--o{ ResearchSession : "uses"
+    UserProvider ||--o{ UserModelAsset : "provides"
+```
+
+| 实体 | 说明 | 关键字段 |
+|------|------|----------|
+| `Tenant` | 租户容器，多租户隔离的根实体 | `id`, `external_id` |
+| `User` | 用户（隶属租户），支持密码登录与 OIDC 登录 | `email`, `hashed_password`, `role`, `external_id` |
+| `ResearchSession` | 研究会话，对应 LangGraph `thread_id` | `title`, `status`, `total_duration_seconds` |
+| `ResearchTask` | 单次研究任务，承载查询输入与所有结构化产出 | `query`, `claims`, `sources`, `status`, `overall_confidence` |
+
+### 三层配置模型
+
+与实体链正交，配置数据按职责分为三层，实现**模型与配置的解耦**：
+
+```mermaid
+graph LR
+    subgraph "凭证层 Credentials"
+        UP[UserProvider<br/>API Key 加密存储<br/>category + provider_name]
+    end
+    subgraph "资产层 Assets"
+        UMA[UserModelAsset<br/>模型注册与能力标记<br/>model_name / capabilities]
+    end
+    subgraph "策略层 Strategy"
+        RP[ResearchPreset<br/>阶段-模型绑定<br/>nodes_config JSON]
+    end
+
+    UP --"提供 API 访问能力"--> UMA
+    UMA --"被 Preset stages 引用"--> RP
+    RP --"决定管线执行行为"--> Graph[LangGraph Pipeline]
+```
+
+1. **凭证层 (`UserProvider`)**：存储第三方服务（LLM / 搜索引擎）的 API Key，所有密钥在入库时使用 **Fernet (AES-256)** 加密存储。支持自定义 `base_url`，兼容各类私有化部署的 API 端点（如国内代理）和同一供应商多账户管理。
+
+2. **资产层 (`UserModelAsset`)**：注册用户可选用的模型资产，绑定所属 Provider。每个 Asset 记录 `model_name`、`display_name`、`capabilities`（如 `["vision", "tool_call"]`），支持按能力筛选。系统级默认模型和用户自定义模型并存。
+
+3. **策略层 (`ResearchPreset`)**：研究预设的定义，核心是 `nodes_config` 字段（JSON 结构），将管线各阶段绑定到具体模型资产和参数：
+
+   ```json
+   {
+     "stages": {
+       "understanding": { "asset_id": "<uuid>", "temperature": 0.1 },
+       "search":        { "asset_id": "<uuid>", "temperature": 0.2 },
+       "verification":  { "asset_id": "<uuid>", "temperature": 0.2 },
+       "report":        { "asset_id": "<uuid>", "temperature": 0.5 },
+       "embedding":     { "asset_id": "<uuid>", "temperature": 0.1 }
+     },
+     "business": {
+       "speed": "research_pipeline",
+       "engines": ["bocha", "tavily"],
+       "max_results_per_query": {"min": 4, "max": 8}
+     }
+   }
+   ```
+
+   每个管线阶段（understanding / search / verification / report / embedding）独立绑定一个模型 Asset，实现**精细化的算力分配**。这也是 `get_llm_for_stage()` 函数"严格寻址模式"的数据来源。
+
+---
+
 ## ✨ 核心特性
 
 ### 🔐 多租户与安全
-- **Tenant / User 两级数据隔离** — 每个租户拥有完全隔离的研究数据
-- **API Key AES-256 加密存储** — 用户配置的第三方服务密钥安全存库
-- **SSRF 防护** — 内置 DNS 级 SSRF 检测，拦截内网请求
-- **PBKDF2 密码哈希** — 使用 480,000 轮迭代的 PBKDF2-SHA256
-- **Logto OIDC 集成** — 可选的外部身份认证平台
+- **Tenant / User 两级数据隔离** — 每个租户拥有完全隔离的研究数据，`ResearchSession` / `ResearchTask` 通过外键级联归属，数据按 `tenant_id` + `user_id` 双维度隔离，删除租户/用户时级联清理
+- **API Key AES-256 加密存储** — 用户配置的第三方服务密钥使用 `cryptography.fernet.Fernet`（基于 AES-256-CBC + HMAC 认证加密）加密后存库。支持独立设置 `ENCRYPTION_KEY` 环境变量，实现 JWT 密钥与加密密钥分离轮换
+- **SSRF 防护** — 内置 DNS 级 SSRF 检测：通过 `socket.getaddrinfo` 解析 URL 至所有 IP → 逐 IP 判断是否为回环/私有/保留地址 → 拦截内网请求。特殊放行 `198.18.0.0/15` 网段（Clash 等代理工具常用的 RFC 2544 基准测试映射地址），解析异常一律视为不安全
+- **PBKDF2 密码哈希** — `480,000` 轮迭代 PBKDF2-SHA256，32 字节输出密钥，16 字节随机盐值。密码验证使用 `hmac.compare_digest` 常量时间比较，抵御时序旁路攻击
+- **Logto OIDC 集成** — 可选的外部身份认证平台，后端通过 JWKS 端点获取公钥，校验 RS256 签名 Access Token
 
 ### 🧠 智能研究管道 (LangGraph 状态机)
 - **有状态可恢复** — 基于 LangGraph Checkpointer，支持断点续传和任务恢复
@@ -213,6 +292,18 @@ TruthSeeker 的核心在 `backend/pipeline/graph.py` 中定义，是一个完整
                                                       总结节点 → END
 ```
 
+### Agent 子图
+
+TruthSeeker 内置了两个独立的 Agent 子图，路由取决于执行模式：
+
+| 子图 | 文件路径 | 适用模式 | 职责 |
+|------|----------|----------|------|
+| **标准 ReAct Agent** | `subgraphs/agent/graph.py` | `fast_react`， `expert_search` | 自主调用搜索引擎和 Reader 工具，多轮迭代直接生成回答 |
+| **搜索规划 Agent** | `subgraphs/search_react/graph.py` | `research_pipeline`（意图分析后） | 关键词生成、搜索策略规划，不直接生成回答，结果由后续主图节点处理 |
+
+- **标准 ReAct Agent** 使用通用工具调用模式（`create_react_agent`），拥有搜索和内容读取能力，适合快速问答和中等深度的调研场景。其内部模型的思考过程通过 `suppress_model_stream` 上下文变量控制是否推送到前端。
+- **搜索规划 Agent** 仅负责制定搜索策略（关键词扩展、多语言/年份配置），搜索结果由后续的主图节点（粗过滤 → LLM 精过滤 → 核验子图）处理。
+
 ### 核验子图详解 (Verify Subgraph)
 
 `backend/pipeline/subgraphs/verify/graph.py` — 这是 TruthSeeker 最独特的设计：
@@ -234,14 +325,82 @@ TruthSeeker 的核心在 `backend/pipeline/graph.py` 中定义，是一个完整
 ```
 ResearchState:
   ├── context      → 上下文（research_id, tenant_id, user_id, preset_id）
-  ├── control      → 控制参数（speed, execution_mode, enable_hitl）
-  ├── interaction  → 人机交互（断点类型、待审批维度）
+  ├── control      → 控制参数（speed, execution_mode）
   ├── memory       → 记忆（消息历史、已证事实、追问历史、摘要）
   ├── runtime      → 运行时（共享数据、管道状态、Agent 状态）
   └── output       → 输出（报告、声明、诊断信息、置信度）
 ```
 
 状态通过 **LangGraph Checkpointer** 在每节点执行后自动持久化，支持通过 `thread_id` 完美恢复。
+
+---
+
+## ⚙️ Worker 架构与任务调度
+
+TruthSeeker 采用 **Worker 进程与 API 进程分离** 的架构。API 进程（FastAPI）受理请求后立即入队，Worker 进程（`backend/worker.py`）在后台执行研究管线并通过 SSE 推送结果。
+
+### 三队列加权轮询
+
+Worker 维护三个 Redis List 作为优先级队列，权重策略确保低延迟任务优先被消费：
+
+| 队列 | Redis Key | 权重 | 对应模式 |
+|------|-----------|------|----------|
+| fast_react | `ts:queue:fast` | **4** | 极速快问 |
+| expert_search | `ts:queue:expert` | **2** | 专家搜索 |
+| research_pipeline | `ts:queue:pipeline` | **1** | 深度研究 |
+
+加权轮询调度序列：`[fast_react] ×4 → [expert_search] ×2 → [pipeline] ×1`，循环往复。每次 `BRPOP timeout 0.1s` 快速轮转。
+
+### Worker 生命周期
+
+```mermaid
+sequenceDiagram
+    participant Client as 浏览器
+    participant API as FastAPI (API 进程)
+    participant Redis as Redis
+    participant Worker as Worker 进程
+
+    Client->>API: POST /api/v1/chat
+    API->>API: 校验入参、构建初始状态
+    API->>Redis: LPUSH 到对应优先级队列
+    API-->>Client: 返回 SSE 流 (text/event-stream)
+
+    Worker->>Redis: BRPOP 加权轮询拉取
+    Worker->>Worker: 编译 LangGraph 图（进程级缓存）
+    Worker->>Worker: 执行 research pipeline (astream_events)
+    Worker->>Redis: 发布 SSE 事件 (PubSub + Stream)
+    Redis-->>API: SSE Consumer 订阅消费
+    API-->>Client: 实时推送 SSE 事件 / token / progress
+```
+
+### 关键机制
+
+- **进程级图编译缓存**：`_graph_cache` 缓存编译后的 LangGraph 图及对应的 Checkpointer / Store 实例，避免每次任务重复编译 PostgreSQL 连接池和图的拓扑结构。
+- **并发控制**：单 Worker 最多 **2 个并发任务**（`MAX_CONCURRENT_JOBS`），由 `asyncio.Semaphore` 控制，防止 LangGraph 图执行阻塞事件循环。
+- **Auto-Scaler 循环**：独立协程监控所有队列的总深度，按三段式策略调整轮询频率：
+  - 总深度 < 2 → 休眠 5s（低负载）
+  - 总深度 2~10 → 休眠 3s（正常）
+  - 总深度 > 10 → 休眠 1s（高压）
+- **分布式取消信号**：Worker 通过 Redis PubSub 订阅 `truthseeker:cancellations` 频道，监听来自 API 端（DELETE 请求 / 客户端断开）的取消指令，终止正在执行的图。
+
+### 后台监听器
+
+Worker 启动时间时启动两个后台监听协程：
+
+| 监听器 | Redis 频道 | 用途 |
+|--------|-----------|------|
+| 取消信号监听 | `truthseeker:cancellations` | 接收任务取消指令并终止图执行，含自动重连逻辑 |
+| LLM 缓存失效监听 | `ts:config:invalidate` | 接收模型配置变更广播，清理本进程的 LLM 实例缓存（TTLCache） |
+
+### Worker 入口
+
+```bash
+# 调试模式（单 Worker）
+python -m backend.worker
+
+# 生产启动（通过 Docker Compose 自动启动）
+# 见 docker-compose.yml worker 服务定义
+```
 
 ---
 
@@ -493,8 +652,7 @@ truth-seeker/
 │   │   │   │   ├── MessageList.tsx #     消息列表
 │   │   │   │   ├── VerificationCard.tsx # 验证声明卡片（核心UI）
 │   │   │   │   ├── ThoughtChainPanel.tsx # 思考链面板
-│   │   │   │   ├── ReportDrawer.tsx #     报告抽屉
-│   │   │   │   └── BreakpointHandler.tsx # 断点审批处理
+│   │   │   │   └── ReportDrawer.tsx #     报告抽屉
 │   │   │   ├── history/            #   历史记录
 │   │   │   └── settings/           #   设置（凭证、预设、工作流）
 │   │   ├── components/             # 通用组件
@@ -609,6 +767,16 @@ VALID_SEARCH_ENGINES: frozenset[str] = frozenset({
 - `search.py` — 关键词扩展和搜索策略 Prompt
 - `report.py` — 报告生成 Prompt
 
+### LLM 实例管理
+
+LLM 实例的创建和缓存由 `backend/core/llm.py` 统一管理：
+
+- **TTLCache（10 分钟）**：LLM 实例在进程级缓存，`maxsize=100`，避免每次节点执行都重新构造 `BaseChatModel`。缓存 key 格式：`{user_id}:{preset_id}:{stage}`。
+- **`_TimedLLMWrapper`**：自动包裹每个 `ainvoke` 调用，记录 `stage + model + duration` 结构化日志，方便追踪模型响应耗时分布。
+- **严格寻址模式**：`get_llm_for_stage(stage, user_id, preset_id)` 根据用户预设的 `nodes_config` 精确绑定模型 Asset，不存在 fallback 链——如果某阶段未绑定 Asset，直接抛出 `RuntimeError`，确保配置可预测。
+- **缓存失效广播**：用户在 UI 修改配置后，API 端通过 Redis PubSub 发布 `ts:config:invalidate` 广播，所有 Worker 监听到后自动清除本进程对应用户的缓存。
+- **连接测试**：API 端 `test_llm_connection()` 供 UI 在配置 API Key 时实时测试可用性，使用 `"ping"` 消息和极少的 Token 消耗。
+
 ---
 
 ## 🚢 部署
@@ -698,7 +866,6 @@ Nginx 在容器内部统一路由，对外仅暴露 80 端口。SSL 终止在外
 |------|------|
 | `step` | 思考链步骤更新 |
 | `model` | 模型 Token 流式输出 |
-| `breakpoint` | 断点（等待用户审批） |
 | `complete` | 研究完成（含最终报告和声明） |
 | `error` | 执行错误 |
 | `sync` | 状态同步（断线重连时） |
