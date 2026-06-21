@@ -4,7 +4,7 @@
 
 sync-deps:  ## 宿主机预构建 .venv（首次/依赖变更后执行一次，3 分钟）
 	@echo "==> 在宿主机同步依赖（走腾讯云镜像）..."
-	uv sync --frozen --no-install-project --no-dev
+	UV_LINK_MODE=copy uv sync --frozen --no-install-project --no-dev
 	@echo "==> .venv 已就绪，现在 docker build 将直接 COPY 进镜像"
 
 # ── 部署 ─────────────────────────────────────────────────────────────────────
