@@ -19,9 +19,11 @@ WORKDIR /app
 # 直接复制宿主机预构建的完整虚拟环境（不再在容器内 uv sync）
 COPY --chown=app:app .venv /app/.venv
 
-# 修正 Python 软链接：uv 创建的 venv 中 python 指向宿主机的 uv 管理路径
-# (如 /home/ubuntu/.local/share/uv/python/...)，容器内不存在，需指向容器自带 Python
-RUN rm -f /app/.venv/bin/python /app/.venv/bin/python3 /app/.venv/bin/python3.14 && \
+# 修正 shebang：uv 创建的脚本写死了宿主机路径（如 /home/ubuntu/.../）
+# 容器内 .venv 在 /app/.venv，需要把所有脚本第一行的 Python 路径改过来
+RUN find /app/.venv/bin -type f -exec sh -c \
+    'head -1 "$1" 2>/dev/null | grep -q "^#!/" && sed -i "1s|^#!/.*\.venv/bin/python[0-9.]*|#!/app/.venv/bin/python|" "$1"' _ {} \; && \
+    rm -f /app/.venv/bin/python /app/.venv/bin/python3 /app/.venv/bin/python3.14 && \
     ln -s /usr/local/bin/python3 /app/.venv/bin/python && \
     ln -s /usr/local/bin/python3 /app/.venv/bin/python3 && \
     ln -s /usr/local/bin/python3 /app/.venv/bin/python3.14
