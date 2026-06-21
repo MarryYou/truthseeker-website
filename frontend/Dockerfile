@@ -2,7 +2,9 @@
 FROM node:22-slim AS deps
 WORKDIR /app
 COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
+# 腾讯云 npm 镜像（容器内不继承宿主机 yarn 配置）
+RUN yarn config set registry https://mirrors.cloud.tencent.com/npm/ && \
+    yarn install --frozen-lockfile
 
 # 阶段 2: 构建
 FROM node:22-slim AS builder

@@ -1,16 +1,14 @@
-# ── 阶段 1: 安装依赖 ──────────────────────────────────────────
-FROM python:3.14-slim AS builder
-
-RUN pip install --no-cache-dir uv
-
-WORKDIR /app
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev && \
-    pip uninstall -y uv && \
-    rm -rf /root/.cache /tmp/*
-
-# ── 阶段 2: 运行 ──────────────────────────────────────────────
+# syntax=docker/dockerfile:1
+# ── 宿主机预构建 .venv，Docker build 纯 COPY，零网络下载 ────────
+# 前置步骤（在 CVM 上跑一次，3 分钟）：
+#   uv sync --frozen --no-install-project --no-dev
+# 然后正常 docker compose build，每次秒过
 FROM python:3.14-slim
+
+# apt 源加速
+ARG APT_MIRROR=mirrors.cloud.tencent.com
+RUN sed -i "s/deb.debian.org/${APT_MIRROR}/g" /etc/apt/sources.list.d/debian.sources && \
+    sed -i "s/security.debian.org/${APT_MIRROR}/g" /etc/apt/sources.list.d/debian.sources
 
 # 创建非 root 用户
 RUN groupadd --system --gid 1000 app && \
@@ -18,10 +16,13 @@ RUN groupadd --system --gid 1000 app && \
 
 WORKDIR /app
 
-# 复制虚拟环境并清理缓存文件（减少攻击面）
-COPY --from=builder --chown=app:app /app/.venv /app/.venv
+# 直接复制宿主机预构建的完整虚拟环境（不再在容器内 uv sync）
+COPY --chown=app:app .venv /app/.venv
+
+# 清理缓存文件（减少攻击面）
 RUN find /app/.venv -type f \( -name '*.pyc' -o -name '*.whl' \) -delete && \
     rm -rf /app/.venv/cache /root/.cache /tmp/*
+
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

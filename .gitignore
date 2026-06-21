@@ -223,3 +223,6 @@ rebuild
 .vscode
 images
 logs
+
+# SSL 证书（本地生成，不提交）
+certbot/
